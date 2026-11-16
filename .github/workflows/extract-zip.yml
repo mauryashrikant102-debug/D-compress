@@ -17,7 +17,7 @@ jobs:
 
       - name: Extract project ZIP
         run: |
-          unzip -o "ZIP FILE.zip" -d .
+         unzip -o "ZIP FILE.ZIP" -d .
           echo "ZIP extraction completed"
 
       - name: Commit extracted project
