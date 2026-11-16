@@ -15,12 +15,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-            - name: Find and extract project ZIP
+      - name: Find ZIP file
+        id: findzip
         run: |
-          ZIP_PATH=$(find . -type f -iname "*.zip" -not -path "./.git/*" | head -n 1)
+          ZIP_PATH=$(find . -maxdepth 2 -type f -iname "*.zip" -not -path "./.git/*" | head -n 1)
           echo "Found ZIP: $ZIP_PATH"
           test -n "$ZIP_PATH"
-          unzip -o "$ZIP_PATH" -d .
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Extract project ZIP
+        run: |
+          unzip -o "${{ steps.findzip.outputs.zip_path }}" -d .
           echo "ZIP extraction completed"
 
       - name: Commit extracted project
