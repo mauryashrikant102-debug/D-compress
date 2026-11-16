@@ -1,4 +1,5 @@
 
+
 name: Extract D-Compress Project ZIP
 
 on:
@@ -25,7 +26,7 @@ jobs:
 
       - name: Extract project ZIP
         run: |
-          unzip -o "${{ steps.findzip.outputs.zip_path }}" -d .
+          unzip -o "${{ steps.findzip.outputs.zip_path }}" -d . -x ".github/*" "./.github/*"
           echo "ZIP extraction completed"
 
       - name: Commit extracted project
@@ -35,4 +36,5 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -m "Extract D-Compress project"
           git push
+          
           
