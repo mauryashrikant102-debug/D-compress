@@ -1,5 +1,5 @@
 
-package com.dcompress;
+ackage com.dcompress;
 
 import android.app.Activity;
 import android.os.Bundle;
