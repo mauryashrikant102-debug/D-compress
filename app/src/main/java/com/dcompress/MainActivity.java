@@ -608,4 +608,4 @@ public class MainActivity extends Activity {
                     "D-Compress-Extracted");
 
             if (!folder.exists() && !folder.mkdirs()) {
-                showStatus("Could not create extra
+                showStatus("Could not create extraction folder.");
