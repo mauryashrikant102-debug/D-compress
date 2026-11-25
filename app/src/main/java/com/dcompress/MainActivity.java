@@ -687,7 +687,154 @@ public class MainActivity extends Activity {
             }
         });
     }
+private String human(long bytes) {
+    if (bytes < 1024) return bytes + " B";
 
+    double kb = bytes / 1024.0;
+    if (kb < 1024) {
+        return String.format(Locale.US, "%.2f KB", kb);
+    }
+
+    double mb = kb / 1024.0;
+    if (mb < 1024) {
+        return String.format(Locale.US, "%.2f MB", mb);
+    }
+
+    double gb = mb / 1024.0;
+    return String.format(Locale.US, "%.2f GB", gb);
+}
+
+private void showStatus(String message) {
+    runOnUiThread(() -> {
+        if (status != null) {
+            status.setText(message);
+        }
+    });
+}
+
+private byte[] readAll(InputStream in) throws IOException {
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    byte[] buffer = new byte[8192];
+    int count;
+
+    while ((count = in.read(buffer)) != -1) {
+        output.write(buffer, 0, count);
+    }
+
+    return output.toByteArray();
+}
+
+private byte[] readFile(File file) throws IOException {
+    try (InputStream in = new FileInputStream(file)) {
+        return readAll(in);
+    }
+}
+
+private String stripExtension(String name) {
+    int dot = name.lastIndexOf('.');
+
+    if (dot > 0) {
+        return name.substring(0, dot);
+    }
+
+    return name;
+}
+
+private String safeName(String name) {
+    if (name == null || name.trim().isEmpty()) {
+        return "file";
+    }
+
+    name = name.replaceAll("[\\\\/:*?\"<>|]", "_");
+
+    if (name.equals(".") || name.equals("..")) {
+        return "file";
+    }
+
+    return name;
+}
+
+private void saveMedia(
+        byte[] data,
+        String fileName,
+        String mimeType,
+        String relativePath
+) throws Exception {
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+
+        Uri collection;
+
+        if (mimeType.startsWith("image/")) {
+            collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        } else if (mimeType.startsWith("video/")) {
+            collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+        } else {
+            collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+        }
+
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+
+        String path = relativePath;
+
+        if ("Download".equalsIgnoreCase(path)) {
+            path = android.os.Environment.DIRECTORY_DOWNLOADS;
+        }
+
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, path);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+
+        Uri outputUri = getContentResolver().insert(collection, values);
+
+        if (outputUri == null) {
+            throw new IOException("Could not create output file.");
+        }
+
+        try {
+            try (OutputStream out =
+                         getContentResolver().openOutputStream(outputUri)) {
+
+                if (out == null) {
+                    throw new IOException("Could not open output file.");
+                }
+
+                out.write(data);
+                out.flush();
+            }
+
+            ContentValues completed = new ContentValues();
+            completed.put(MediaStore.MediaColumns.IS_PENDING, 0);
+
+            getContentResolver().update(
+                    outputUri, completed, null, null);
+
+        } catch (Exception e) {
+            getContentResolver().delete(outputUri, null, null);
+            throw e;
+        }
+
+    } else {
+
+        File folder = getExternalFilesDir(relativePath);
+
+        if (folder == null) {
+            throw new IOException("Storage unavailable.");
+        }
+
+        if (!folder.exists() && !folder.mkdirs()) {
+            throw new IOException("Could not create output folder.");
+        }
+
+        File output = new File(folder, fileName);
+
+        try (FileOutputStream out = new FileOutputStream(output)) {
+            out.write(data);
+            out.flush();
+        }
+    }
+}
     @Override
     protected void onDestroy() {
         worker.shutdown();
