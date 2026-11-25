@@ -628,5 +628,69 @@ public class MainActivity extends Activity {
                     "D-Compress-Extracted");
 
             try {
-                if (!folder.exists() && !folder.mkdirs()) {
-        
+                
+                               if (!folder.exists() && !folder.mkdirs()) {
+                    throw new Exception("Could not create extraction folder.");
+                }
+
+                InputStream in = getContentResolver().openInputStream(uri);
+                if (in == null) {
+                    throw new Exception("Cannot open ZIP file.");
+                }
+
+                int extracted = 0;
+
+                try (ZipInputStream zis = new ZipInputStream(in)) {
+                    ZipEntry entry;
+                    byte[] buffer = new byte[8192];
+                    int count;
+
+                    while ((entry = zis.getNextEntry()) != null) {
+                        File out = new File(folder, entry.getName());
+
+                        String root = folder.getCanonicalPath()
+                                + File.separator;
+
+                        if (!out.getCanonicalPath().startsWith(root)) {
+                            throw new Exception("Unsafe ZIP entry blocked.");
+                        }
+
+                        if (entry.isDirectory()) {
+                            out.mkdirs();
+                        } else {
+                            File parent = out.getParentFile();
+
+                            if (parent != null) {
+                                parent.mkdirs();
+                            }
+
+                            try (FileOutputStream fos =
+                                         new FileOutputStream(out)) {
+                                while ((count = zis.read(buffer)) != -1) {
+                                    fos.write(buffer, 0, count);
+                                }
+                            }
+
+                            extracted++;
+                        }
+
+                        zis.closeEntry();
+                    }
+                }
+
+                showStatus("ZIP extracted successfully!\n"
+                        + "Files: " + extracted
+                        + "\nFolder: " + folder.getAbsolutePath());
+
+            } catch (Exception e) {
+                showStatus("Extract error: " + e.getMessage());
+            }
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        worker.shutdown();
+        super.onDestroy();
+    }
+}
