@@ -1,7 +1,8 @@
 
-ackage com.dcompress;
+package com.dcompress;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.content.Intent;
 import android.net.Uri;
@@ -16,9 +17,11 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.MediaExtractor;
 import android.media.MediaMuxer;
+import android.media.MediaCodec;
+import android.media.MediaFormat;
 import android.view.Gravity;
-import android.widget.*;
 import android.view.View;
+import android.widget.*;
 import android.os.Build;
 
 import java.io.*;
@@ -40,7 +43,7 @@ public class MainActivity extends Activity {
     private boolean selectedVideo = false;
     private int targetKB = 500;
 
-    private ArrayList<Uri> zipUris = new ArrayList<>();
+    private final ArrayList<Uri> zipUris = new ArrayList<>();
     private final ExecutorService worker =
             Executors.newSingleThreadExecutor();
 
@@ -99,7 +102,7 @@ public class MainActivity extends Activity {
                 v -> choose("image/*", PICK_PHOTO));
         addButton(page, "⚡  Smart Photo Compression",
                 v -> startPhoto(true));
-        addButton(page, "🔒  Lossless PNG Re-encode",
+        addButton(page, "🔒  PNG Re-encode",
                 v -> startPhoto(false));
 
         heading(page, "VIDEO TOOLS");
@@ -155,7 +158,6 @@ public class MainActivity extends Activity {
         bg.setColor(Color.rgb(37, 99, 235));
         bg.setCornerRadius(22);
         b.setBackground(bg);
-
         b.setOnClickListener(listener);
 
         LinearLayout.LayoutParams p =
@@ -173,6 +175,7 @@ public class MainActivity extends Activity {
         i.setType(type);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        i.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(i, request);
     }
 
@@ -182,6 +185,7 @@ public class MainActivity extends Activity {
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        i.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(i, PICK_ZIP_FILES);
     }
 
@@ -196,14 +200,20 @@ public class MainActivity extends Activity {
             zipUris.clear();
 
             if (data.getClipData() != null) {
-                for (int x = 0; x < data.getClipData().getItemCount(); x++) {
-                    zipUris.add(data.getClipData().getItemAt(x).getUri());
+                for (int x = 0;
+                     x < data.getClipData().getItemCount(); x++) {
+                    Uri u = data.getClipData().getItemAt(x).getUri();
+                    persistPermission(u, data);
+                    zipUris.add(u);
                 }
             } else if (data.getData() != null) {
-                zipUris.add(data.getData());
+                Uri u = data.getData();
+                persistPermission(u, data);
+                zipUris.add(u);
             }
 
-            fileInfo.setText(zipUris.size() + " files selected for ZIP");
+            fileInfo.setText(zipUris.size()
+                    + " files selected for ZIP");
             createZip();
             return;
         }
@@ -211,14 +221,9 @@ public class MainActivity extends Activity {
         selectedUri = data.getData();
         if (selectedUri == null) return;
 
-        getContentResolver().takePersistableUriPermission(
-                selectedUri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-        );
+        persistPermission(selectedUri, data);
 
-        selectedVideo = requestCode == PICK_VIDEO
-                || requestCode == PICK_ZIP;
-
+        selectedVideo = requestCode == PICK_VIDEO;
         selectedName = getDisplayName(selectedUri);
 
         fileInfo.setText(
@@ -231,18 +236,28 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void persistPermission(Uri uri, Intent data) {
+        try {
+            int flags = data.getFlags()
+                    & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            getContentResolver().takePersistableUriPermission(
+                    uri, flags);
+        } catch (Exception ignored) {}
+    }
+
     private String getDisplayName(Uri uri) {
         String name = "media";
 
         try (Cursor c = getContentResolver().query(
                 uri, null, null, null, null)) {
             if (c != null && c.moveToFirst()) {
-                int index = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int index = c.getColumnIndex(
+                        OpenableColumns.DISPLAY_NAME);
                 if (index >= 0) name = c.getString(index);
             }
         } catch (Exception ignored) {}
 
-        return name;
+        return name == null ? "media" : name;
     }
 
     private long getSize(Uri uri) {
@@ -250,7 +265,9 @@ public class MainActivity extends Activity {
                 uri, null, null, null, null)) {
             if (c != null && c.moveToFirst()) {
                 int index = c.getColumnIndex(OpenableColumns.SIZE);
-                if (index >= 0) return c.getLong(index);
+                if (index >= 0 && !c.isNull(index)) {
+                    return c.getLong(index);
+                }
             }
         } catch (Exception ignored) {}
         return 0;
@@ -266,15 +283,18 @@ public class MainActivity extends Activity {
         input.setInputType(2);
         input.setHint("Enter target size in KB");
 
-        new android.app.AlertDialog.Builder(this)
+        new AlertDialog.Builder(this)
                 .setTitle("Custom Target")
                 .setView(input)
                 .setPositiveButton("Set", (d, w) -> {
                     try {
                         int value = Integer.parseInt(
-                                input.getText().toString());
-                        if (value > 0) setTarget(value);
-                        else status.setText("Enter a valid size.");
+                                input.getText().toString().trim());
+                        if (value > 0 && value <= 100000) {
+                            setTarget(value);
+                        } else {
+                            status.setText("Enter a valid size.");
+                        }
                     } catch (Exception e) {
                         status.setText("Invalid target size.");
                     }
@@ -306,10 +326,11 @@ public class MainActivity extends Activity {
 
     private void processPhoto(Uri uri, String name,
                               boolean smart, int target) throws Exception {
-
         byte[] original;
 
-        try (InputStream in = getContentResolver().openInputStream(uri)) {
+        try (InputStream in =
+                     getContentResolver().openInputStream(uri)) {
+            if (in == null) throw new Exception("Cannot open photo.");
             original = readAll(in);
         }
 
@@ -328,7 +349,7 @@ public class MainActivity extends Activity {
 
             if (!lower.endsWith(".png")) {
                 bitmap.recycle();
-                showStatus("Lossless PNG mode supports PNG files only.");
+                showStatus("PNG Re-encode supports PNG files only.");
                 return;
             }
 
@@ -363,26 +384,26 @@ public class MainActivity extends Activity {
         byte[] compressed = output.toByteArray();
 
         if (compressed.length >= original.length) {
-            showStatus("No size reduction. Original kept safe.\nOriginal: "
-                    + human(original.length)
+            showStatus("No size reduction. Original kept safe.\n"
+                    + "Original: " + human(original.length)
                     + "\nResult: " + human(compressed.length));
             return;
         }
 
         String outputName = smart
                 ? stripExtension(name) + "_compressed.jpg"
-                : stripExtension(name) + "_lossless.png";
+                : stripExtension(name) + "_reencoded.png";
 
-        Uri saved = saveMedia(compressed, outputName,
+        saveMedia(compressed, outputName,
                 smart ? "image/jpeg" : "image/png",
                 "Pictures/D-Compress");
 
-        showStatus("Photo saved!\n" +
-                "Original: " + human(original.length) +
-                "\nNew size: " + human(compressed.length) +
-                "\nSaved: " + human(original.length - compressed.length) +
-                "\nTarget: " + target + " KB" +
-                "\nLocation: Pictures/D-Compress");
+        showStatus("Photo saved!\n"
+                + "Original: " + human(original.length)
+                + "\nNew size: " + human(compressed.length)
+                + "\nSaved: " + human(original.length - compressed.length)
+                + "\nTarget: " + target + " KB"
+                + "\nLocation: Pictures/D-Compress");
     }
 
     private void startVideo() {
@@ -393,7 +414,6 @@ public class MainActivity extends Activity {
 
         Uri uri = selectedUri;
         String name = selectedName;
-
         status.setText("Processing video...");
 
         worker.execute(() -> {
@@ -410,73 +430,87 @@ public class MainActivity extends Activity {
                 "video_" + System.currentTimeMillis() + ".mp4");
 
         MediaExtractor extractor = new MediaExtractor();
-        extractor.setDataSource(this, uri, null);
+        MediaMuxer muxer = null;
+        boolean muxerStarted = false;
 
-        MediaMuxer muxer = new MediaMuxer(
-                output.getAbsolutePath(),
-                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+        try {
+            extractor.setDataSource(this, uri, null);
 
-        int[] trackMap = new int[extractor.getTrackCount()];
-        Arrays.fill(trackMap, -1);
+            muxer = new MediaMuxer(
+                    output.getAbsolutePath(),
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
 
-        int tracks = 0;
+            int[] trackMap = new int[extractor.getTrackCount()];
+            Arrays.fill(trackMap, -1);
 
-        for (int i = 0; i < extractor.getTrackCount(); i++) {
-            MediaFormat format = extractor.getTrackFormat(i);
-            String mime = format.getString(MediaFormat.KEY_MIME);
+            int tracks = 0;
 
-            if (mime != null &&
-                    (mime.startsWith("video/") ||
-                     mime.startsWith("audio/"))) {
-                extractor.selectTrack(i);
-                trackMap[i] = muxer.addTrack(format);
-                tracks++;
-            }
-        }
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.getString(MediaFormat.KEY_MIME);
 
-        if (tracks == 0) {
-            extractor.release();
-            muxer.release();
-            throw new Exception("No compatible audio/video tracks.");
-        }
-
-        muxer.start();
-
-        android.media.MediaCodec.BufferInfo info =
-                new android.media.MediaCodec.BufferInfo();
-
-        java.nio.ByteBuffer buffer =
-                java.nio.ByteBuffer.allocate(4 * 1024 * 1024);
-
-        while (true) {
-            int track = extractor.getSampleTrackIndex();
-            if (track < 0) break;
-
-            buffer.clear();
-            int size = extractor.readSampleData(buffer, 0);
-
-            if (size < 0) break;
-
-            info.offset = 0;
-            info.size = size;
-            info.presentationTimeUs = extractor.getSampleTime();
-            info.flags = extractor.getSampleFlags();
-
-            if (trackMap[track] >= 0) {
-                muxer.writeSampleData(trackMap[track], buffer, info);
+                if (mime != null &&
+                        (mime.startsWith("video/")
+                                || mime.startsWith("audio/"))) {
+                    extractor.selectTrack(i);
+                    trackMap[i] = muxer.addTrack(format);
+                    tracks++;
+                }
             }
 
-            extractor.advance();
-        }
+            if (tracks == 0) {
+                throw new Exception("No compatible audio/video tracks.");
+            }
 
-        muxer.stop();
-        muxer.release();
-        extractor.release();
+            muxer.start();
+            muxerStarted = true;
+
+            MediaCodec.BufferInfo info =
+                    new MediaCodec.BufferInfo();
+
+            java.nio.ByteBuffer buffer =
+                    java.nio.ByteBuffer.allocate(8 * 1024 * 1024);
+
+            while (true) {
+                int track = extractor.getSampleTrackIndex();
+                if (track < 0) break;
+
+                buffer.clear();
+                int size = extractor.readSampleData(buffer, 0);
+                if (size < 0) break;
+
+                info.offset = 0;
+                info.size = size;
+                info.presentationTimeUs = extractor.getSampleTime();
+                info.flags = extractor.getSampleFlags();
+
+                if (trackMap[track] >= 0) {
+                    buffer.position(0);
+                    buffer.limit(size);
+                    muxer.writeSampleData(trackMap[track], buffer, info);
+                }
+
+                extractor.advance();
+            }
+
+            muxer.stop();
+            muxerStarted = false;
+
+        } finally {
+            if (muxer != null) {
+                if (muxerStarted) {
+                    try { muxer.stop(); } catch (Exception ignored) {}
+                }
+                try { muxer.release(); } catch (Exception ignored) {}
+            }
+            try { extractor.release(); } catch (Exception ignored) {}
+        }
 
         long originalSize = getSize(uri);
         long newSize = output.length();
 
-        if (newSize < originalSize) {
+        if (newSize > 0 && originalSize > 0
+                && newSize < originalSize) {
             byte[] bytes = readFile(output);
 
             saveMedia(bytes,
@@ -484,14 +518,14 @@ public class MainActivity extends Activity {
                     "video/mp4",
                     "Movies/D-Compress");
 
-            showStatus("Video saved!\nOriginal: " +
-                    human(originalSize) +
-                    "\nNew: " + human(newSize) +
-                    "\nLocation: Movies/D-Compress");
+            showStatus("Video saved!\nOriginal: "
+                    + human(originalSize)
+                    + "\nNew: " + human(newSize)
+                    + "\nLocation: Movies/D-Compress");
         } else {
-            showStatus("Video was not smaller. Original kept safe.\n" +
-                    "Original: " + human(originalSize) +
-                    "\nRemuxed: " + human(newSize));
+            showStatus("Video was not smaller. Original kept safe.\n"
+                    + "Original: " + human(originalSize)
+                    + "\nRemuxed: " + human(newSize));
         }
 
         output.delete();
@@ -504,7 +538,6 @@ public class MainActivity extends Activity {
         }
 
         status.setText("Creating ZIP...");
-
         ArrayList<Uri> files = new ArrayList<>(zipUris);
 
         worker.execute(() -> {
@@ -515,16 +548,28 @@ public class MainActivity extends Activity {
                          new ZipOutputStream(new FileOutputStream(zip))) {
 
                 byte[] buffer = new byte[8192];
+                HashSet<String> usedNames = new HashSet<>();
 
                 for (Uri uri : files) {
                     String name = safeName(getDisplayName(uri));
+                    String entryName = name;
+                    int suffix = 1;
 
-                    zos.putNextEntry(new ZipEntry(name));
+                    while (usedNames.contains(entryName)) {
+                        entryName = suffix++ + "_" + name;
+                    }
+                    usedNames.add(entryName);
+
+                    zos.putNextEntry(new ZipEntry(entryName));
 
                     try (InputStream in =
                                  getContentResolver().openInputStream(uri)) {
+                        if (in == null) {
+                            throw new Exception("Cannot read " + name);
+                        }
+
                         int count;
-                        while ((count = in.read(buffer)) > 0) {
+                        while ((count = in.read(buffer)) != -1) {
                             zos.write(buffer, 0, count);
                         }
                     }
@@ -532,6 +577,7 @@ public class MainActivity extends Activity {
                     zos.closeEntry();
                 }
 
+                zos.finish();
                 byte[] bytes = readFile(zip);
 
                 saveMedia(bytes,
@@ -539,9 +585,9 @@ public class MainActivity extends Activity {
                         "application/zip",
                         "Download");
 
-                showStatus("ZIP created successfully.\n" +
-                        "Size: " + human(zip.length()) +
-                        "\nSaved in Downloads.");
+                showStatus("ZIP created successfully.\n"
+                        + "Size: " + human(zip.length())
+                        + "\nSaved in Downloads.");
             } catch (Exception e) {
                 showStatus("ZIP error: " + e.getMessage());
             } finally {
@@ -561,60 +607,5 @@ public class MainActivity extends Activity {
                     getExternalFilesDir(null),
                     "D-Compress-Extracted");
 
-            folder.mkdirs();
-
-            try (InputStream in =
-                         getContentResolver().openInputStream(uri);
-                 ZipInputStream zis = new ZipInputStream(in)) {
-
-                ZipEntry entry;
-                byte[] buffer = new byte[8192];
-                int count;
-                int extracted = 0;
-
-                while ((entry = zis.getNextEntry()) != null) {
-                    File out = new File(folder, entry.getName());
-
-                    String root = folder.getCanonicalPath()
-                            + File.separator;
-
-                    if (!out.getCanonicalPath().startsWith(root)) {
-                        throw new Exception("Unsafe ZIP entry blocked.");
-                    }
-
-                    if (entry.isDirectory()) {
-                        out.mkdirs();
-                    } else {
-                        File parent = out.getParentFile();
-                        if (parent != null) parent.mkdirs();
-
-                        try (FileOutputStream fos =
-                                     new FileOutputStream(out)) {
-                            while ((count = zis.read(buffer)) > 0) {
-                                fos.write(buffer, 0, count);
-                            }
-                        }
-                        extracted++;
-                    }
-
-                    zis.closeEntry();
-                }
-
-                showStatus("ZIP extracted!\nFiles: " + extracted +
-                        "\nFolder: " + folder.getAbsolutePath());
-            } catch (Exception e) {
-                showStatus("Extract error: " + e.getMessage());
-            }
-        });
-    }
-
-    private Uri saveMedia(byte[] bytes, String name,
-                          String mime, String folder) throws Exception {
-
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-        values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
-
-        if (Build.VERSION.SDK_INT >= 29) {
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
-            values.put(MediaStore.MediaColumns.IS_P
+            if (!folder.exists() && !folder.mkdirs()) {
+                showStatus("Could not create extra
