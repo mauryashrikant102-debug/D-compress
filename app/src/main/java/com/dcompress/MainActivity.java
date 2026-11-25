@@ -4,9 +4,10 @@ package com.dcompress;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
+import android.os.Build;
 import android.content.Intent;
-import android.net.Uri;
 import android.content.ContentValues;
+import android.net.Uri;
 import android.database.Cursor;
 import android.provider.OpenableColumns;
 import android.provider.MediaStore;
@@ -22,7 +23,6 @@ import android.media.MediaFormat;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
-import android.os.Build;
 
 import java.io.*;
 import java.util.*;
@@ -98,34 +98,46 @@ public class MainActivity extends Activity {
         page.addView(intro, match());
 
         heading(page, "PHOTO TOOLS");
+
         addButton(page, "📷  Choose Photo",
                 v -> choose("image/*", PICK_PHOTO));
+
         addButton(page, "⚡  Smart Photo Compression",
                 v -> startPhoto(true));
+
         addButton(page, "🔒  PNG Re-encode",
                 v -> startPhoto(false));
 
         heading(page, "VIDEO TOOLS");
+
         addButton(page, "🎬  Choose Video",
                 v -> choose("video/*", PICK_VIDEO));
+
         addButton(page, "🔒  Lossless Video Remux",
                 v -> startVideo());
 
         heading(page, "TARGET SIZE");
+
         addButton(page, "500 KB",
                 v -> setTarget(500));
+
         addButton(page, "1 MB",
                 v -> setTarget(1024));
+
         addButton(page, "200 KB",
                 v -> setTarget(200));
+
         addButton(page, "100 KB",
                 v -> setTarget(100));
+
         addButton(page, "Custom Target (KB)",
                 v -> customTarget());
 
         heading(page, "ZIP TOOLS");
+
         addButton(page, "📦  Create ZIP",
                 v -> chooseZipFiles());
+
         addButton(page, "📂  Extract ZIP",
                 v -> choose("application/zip", PICK_ZIP));
 
@@ -270,6 +282,7 @@ public class MainActivity extends Activity {
                 }
             }
         } catch (Exception ignored) {}
+
         return 0;
     }
 
@@ -290,6 +303,7 @@ public class MainActivity extends Activity {
                     try {
                         int value = Integer.parseInt(
                                 input.getText().toString().trim());
+
                         if (value > 0 && value <= 100000) {
                             setTarget(value);
                         } else {
@@ -354,6 +368,7 @@ public class MainActivity extends Activity {
             }
 
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output);
+
         } else {
             int quality = 90;
             byte[] result = new byte[0];
@@ -361,8 +376,10 @@ public class MainActivity extends Activity {
 
             while (quality >= 20) {
                 output.reset();
+
                 bitmap.compress(Bitmap.CompressFormat.JPEG,
                         quality, output);
+
                 result = output.toByteArray();
 
                 if (result.length <= limit) break;
@@ -503,6 +520,7 @@ public class MainActivity extends Activity {
                 }
                 try { muxer.release(); } catch (Exception ignored) {}
             }
+
             try { extractor.release(); } catch (Exception ignored) {}
         }
 
@@ -558,8 +576,8 @@ public class MainActivity extends Activity {
                     while (usedNames.contains(entryName)) {
                         entryName = suffix++ + "_" + name;
                     }
-                    usedNames.add(entryName);
 
+                    usedNames.add(entryName);
                     zos.putNextEntry(new ZipEntry(entryName));
 
                     try (InputStream in =
@@ -588,8 +606,10 @@ public class MainActivity extends Activity {
                 showStatus("ZIP created successfully.\n"
                         + "Size: " + human(zip.length())
                         + "\nSaved in Downloads.");
+
             } catch (Exception e) {
                 showStatus("ZIP error: " + e.getMessage());
+
             } finally {
                 zip.delete();
             }
@@ -607,5 +627,6 @@ public class MainActivity extends Activity {
                     getExternalFilesDir(null),
                     "D-Compress-Extracted");
 
-            if (!folder.exists() && !folder.mkdirs()) {
-                showStatus("Could not create extraction folder.");
+            try {
+                if (!folder.exists() && !folder.mkdirs()) {
+        
